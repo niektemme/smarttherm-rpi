@@ -1,20 +1,30 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+#   Smart Thermostat - Raspberry PI part
+#   Copyright (C) 2015 by Niek Temme
+#   Documentation: http://niektemme.com/@@
 #
-# Niek Temme
-# smart thermostat
-# http://niektemme.com
+#   This program is free software: you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation, either version 3 of the License, or
+#   (at your option) any later version.
 #
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
 #
+#   You should have received a copy of the GNU General Public License
+#   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-#import sqlite3
+#import modules
 import threading
-from xbee import ZigBee
+from xbee import ZigBee #xbee 2
 import serial
 import struct
 import codecs
-import apsw
+import apsw #alternative python sqlite wrapper
 import sys
 import time
 import datetime
@@ -22,10 +32,12 @@ import happybase
 import random
 import logging
 
+#basic logging information change to log file
 logging.basicConfig(filename='/usr/local/tempniek/18log.log',level=logging.INFO)
 logging.info('I told you so')
 
 try:
+    #GLOBAL variables
     
     logging.info("Hello from Raspberry pi")
     curtime = time.time()
@@ -33,22 +45,23 @@ try:
     
     # sqllite settings
     vuri = ':memory:'
-    #db1 = apsw.connect(vuri, check_same_thread = False)
     dbc = apsw.Connection(vuri)
      
     #xbee connection
     ser = serial.Serial('/dev/ttyAMA0', 9600, timeout=5)
     xbee = ZigBee(ser,escaped=True)
     
-    #basic vals
+    #basic sensor keys
     knownprekeys = ['40b5af00_rx000A01_','40b5af00_rx000A02_','40b5af00_rx000A03_','40b5af00_rx000A04_','40b5af00_rx000A05_','40b5af00_rx000A06_','40b5af00_rx000A07_','40b5af01_rx000A01_','40b5af01_rx000A02_','40b5af01_rx000A03_','40b5af01_rx000A04_','40b5af01_rx000A05_','40b5af01_rx000A07_','40b5af01_rx000B01_','40b5af01_rx000B02_','40b5af01_rx000B03_','40b5af01_rx000B04_']
     
     time.sleep(2)
+    
+    #Happybase connection pool to HBase server. Usses ssh portforwarding to connect to remote host.
     hpool = happybase.ConnectionPool(6,host='localhost')
     
    
     
-    #classes for threading
+    #classes used for multithreading.
     class myThreadInsert (threading.Thread):
         def __init__(self):
             threading.Thread.__init__(self)
@@ -129,18 +142,23 @@ try:
                 fupusedscenario()
             except Exception:
                 logging.exception("fupusedscenario")
-    
-    #coninues fucntions
-    #read xbee to pi db
-    #test = ['b','c','d']
+                
     
     def fins(fvcurtime,fvsource,fvid,fvdata):
-    #sqliteinsert function
+        """
+        This function inserts data into the sensvals table.
+        Sets rowkey used by HBASE and seperate key parts for indexing.
+        
+        Key format: <device id>_<port id>_<reverse epoch>_<reverse milliseconds>. 
+        For example:  40b5af01_rx000A01_8571346790_9184822.
+
+        Used by xinsert() function.
+        """
         bvepoch = 9999999999
         bvsub = 9999999
-        fvepoch = int(fvcurtime)
+        fvepoch = int(fvcurtime) #remove sub seconds from epoch
         fkepoch = bvepoch - fvepoch
-        fvsub =  bvsub - int(datetime.datetime.fromtimestamp(fvcurtime).strftime('%f'))
+        fvsub =  bvsub - int(datetime.datetime.fromtimestamp(fvcurtime).strftime('%f')) #only milisecond part from epoch
         fvprekey = fvsource + '_' + fvid + '_'
         fvkey = fvprekey + str(fkepoch) + '_' + str(fvsub)
         dbi = dbc.cursor()
@@ -148,17 +166,23 @@ try:
         dbi.close()
     
     def xinsert():
-    # insert values as db1
+        """
+        Receives and sends data from and to the XBee.
+        Sending and receiving combined in one thread because only one tread can use GPIO port.
+        Recieving is done as fast as possible.
+        Sinding only at 1 second interval.
+        Runs as a sperate thread.
+        """
         ficurtime = 0
         fivepoch = 0
         fiprevepcoh = 0
-        ficursource = '40b5af01'
-        DEST_ADDR_LONG = "\x00\x13\xA2\x00@\xB5\xAF\x00"
+        ficursource = '40b5af01' #device id of raspberry pi only used for logging 
+        DEST_ADDR_LONG = "\x00\x13\xA2\x00@\xB5\xAF\x00" #destination adress currently fixed value
         while True:
-        #for i1 in range(0, 20000):
             logging.debug("insert started")
             logging.debug(datetime.datetime.utcnow())
             try:
+                #start with receive part
                 ficurtime = time.time()
                 fivepoch = int(ficurtime)
                 fimintime = fivepoch - 5
@@ -168,25 +192,22 @@ try:
                 if vid != 'tx_status':
                     vsource = (codecs.decode(codecs.encode(response['source_addr_long'],'hex'),'utf-8')[8:])
                     logging.debug(vsource)
-                    #vsource = 'rs4021' #(codecs.decode(codecs.encode(response['source_addr_long'],'hex'),'utf-8')[8:])
-                    
                     logging.debug(vid)
-                    #vid = 'rx' # (response['id'])
-                    #vdata = 'a'+random.choice(test)+':200,300,23423,2341,1234' #codecs.decode(response['rf_data'],'utf-8')
                     vdata = codecs.decode(response['rf_data'],'utf-8')
                     logging.debug(vdata)
-                    if vid == 'rx':
-                        vid = 'rx'+(vdata[0:3].zfill(6))
+                    if vid == 'rx': #special case if port is rx. Assumes arduino is sending data.
+                        vid = 'rx'+(vdata[0:3].zfill(6)) #first part of payload is sendor ID
                         vdata = vdata[4:]
-                        vdatas = vdata.split(',')
+                        vdatas = vdata.split(',') #assumes array of values
                         for vdatasv in vdatas:
                             vdatasv = int(vdatasv)
-                            fins(time.time(),vsource,vid,vdatasv)
-                    else:
+                            fins(time.time(),vsource,vid,vdatasv) #use fins() function to actuall insert data in database
+                    else: #case of normal xbee payload
                         vid = vid.zfill(8)
                         vdata = int(vdata)
-                        fins(time.time(),vsource,vid,vdata)
-                        
+                        fins(time.time(),vsource,vid,vdata) #use fins() function to actuall insert data in database
+                
+                #send at 1 second interval      
                 if fivepoch > fiprevepcoh:
                     fiprevepcoh = fivepoch
                     dbd11 = dbc.cursor()
@@ -194,19 +215,20 @@ try:
                     rows = dbd11.fetchall()
                     for row in rows:
                         fipayload = row[0]
-                        #logging.info(fipayload)
-                        xbee.tx(dest_addr='\x00\x00',dest_addr_long=DEST_ADDR_LONG,data=str(fipayload),frame_id='\x01')
-                        fins(ficurtime,ficursource,'rx000B04',int('9'+str(fipayload)))
-                        #logging.info(str(fipayload))
+                        xbee.tx(dest_addr='\x00\x00',dest_addr_long=DEST_ADDR_LONG,data=str(fipayload),frame_id='\x01') #send trought XBee
+                        fins(ficurtime,ficursource,'rx000B04',int('9'+str(fipayload))) #logging of send message in hsensvals table
                     dbd11.close()
                     
             except Exception:
                 logging.exception("fxinsert")
             time.sleep(0.001)      
                 
-    #read pidb        
+      
     def fread():
-        #for i2 in range(0,4):
+        """
+        Uploads data from sensvals table at Raspberry PI to hsensvals HBase table at cloud server.
+        Runs as a sperate thread.
+        """
         listmins = []
         while True:
             logging.debug('read starting')
@@ -215,39 +237,33 @@ try:
                 with hpool.connection(timeout=3) as connection:      
                     table = connection.table('hsensvals')
                     del listmins[:]
-                    for knownprekey in knownprekeys:
-                        hval = table.scan(row_prefix='%s' % knownprekey,batch_size=1,limit=1)
+                    for knownprekey in knownprekeys: #get the last uploaded timestamp (from row key for each sensor)
+                        hval = table.scan(row_prefix='%s' % knownprekey,batch_size=1,limit=1) 
                         phval = next(iter(hval), None)[0]
-                        listmins.append([knownprekey,phval])
-                    #listmins.append(['rs4021_rx0000ab_', 'rs4021_rx0000ab_8581753968_9225133'])
-                    #listmins.append(['rs4021_rx0000ac_', 'rs4021_rx0000ac_8581753968_9014061'])
+                        listmins.append([knownprekey,phval]) #create array with sensor key and most recent uploaded timestamp
                     logging.debug(listmins)
                     cur1 = dbc.cursor()
                     bsend = table.batch()
+                    #start uploading
                     for listmin in listmins:
                         tvprekey = listmin[0]
                         tvkey = listmin[1]
-                        #tukey = 'a'
                         logging.debug(tvkey)
                         rrows = 1
                         ihsend = 0
                         while (rrows>0):
-                            #logging.debug(tvkey)
                             cur1.execute("SELECT vkey,vvalue FROM sensvals where vprekey = '%s' and vkey < '%s' order by vkey desc limit 500" % (tvprekey,tvkey))
-                            #cur1.execute("SELECT count(*) FROM sensvals where vkey < '%s'" % 'rs4021_rxac_9999999999_9999999')
                             rows = cur1.fetchall()
                             rrows = len(rows)
                             logging.debug(rrows)
                             for row in rows:
-                                #logging.debug(row)
                                 tvkey = row[0]
                                 bsend.put(row[0], {'fd:cd': str(row[1])})
                                 ihsend = ihsend + 1
-                            if ihsend > 5000:
+                            if ihsend > 5000: #in between send if there are more that 5000 rows
                                 bsend.send()
                                 logging.debug("sendp")
                                 ihsend = 0
-                        #logging.debug(rrows)
                     cur1.close()
                     bsend.send()
             except Exception:
@@ -256,19 +272,21 @@ try:
             time.sleep(2)
     
     def fdel():
-    ## insert values as db1
-        #for i3 in range(0, 100):
+        """
+        Deletes old data from local tables at Raspberry PI.
+        Runs as a sperate thread.
+        """
         while True:
             time.sleep(5)
             try:
                 logging.debug("del started")
                 fvcurtime = time.time()
-                fdvepoch = int(fvcurtime) - 120
+                fdvepoch = int(fvcurtime) - 120 #keep sensor values for two minues
                 dbd = dbc.cursor()
                 dbd.execute("DELETE FROM sensvals WHERE vepoch < %i" % fdvepoch)
                 dbd.close()
                 
-                fdusedscenvepoch = int(fvcurtime) - (2*24*60*60)
+                fdusedscenvepoch = int(fvcurtime) - (2*24*60*60) #used scnearios values for two days
                 dbdel2 = dbc.cursor()
                 dbdel2.execute("DELETE FROM usedscenario WHERE viepoch < %i" % fdusedscenvepoch)
                 dbdel2.close()    
@@ -277,6 +295,11 @@ try:
                 logging.exception("fdel")
             
     def fstatus():
+        """
+        Periodically writes status information to log file.
+        Includes number of rows in local tables.
+        Runs as a sperate thread.
+        """
         while True:
             time.sleep(30)
             try:
@@ -328,6 +351,11 @@ try:
             time.sleep(3600)
             
     def fcurrent():
+        """
+        Caclulcates roling avarages for diferent sensor values.
+        Inserts avarage balues in senscur tables and as new values in sensvals tables.
+        Runs as a sperate thread.
+        """
         time.sleep(2)
         while True:   
             try:
@@ -338,7 +366,7 @@ try:
                 fvepoch = int(fvcurtime)
                 fminvepochtemp = fvepoch - 20
                 fminvepochset = fvepoch - 1
-                cursource = '40b5af01'
+                cursource = '40b5af01' #id of Rapsberry PI device
                 
                 dbd3 = dbc.cursor()
                 dbd3.execute("DELETE FROM senscur")
@@ -359,22 +387,24 @@ try:
             time.sleep(1)
             
     def fcurtemp ():
+        """
+        Downloads most recent outside temperature from cloud server.
+        First inserts new value in hcurtemp table.
+        Then deletes old values from hcurtemp table.
+        Runs as a sperate thread.
+        """
         while True:   
             try:
                 dbdc1 = dbc.cursor()
                 dbdc1.execute("SELECT min(vkey) FROM curtemp")
                 rows = dbdc1.fetchall()
-                #rrows = len(rows)
-                #print(rrows)
-                #for row in rows:
-                #    rmaxtemp = (row)[0]
+        
                 maxtemp = (rows)[0][0]
                 if (maxtemp == None):
                     maxtemp = 9999999999
                 dbdc1.close()
                 
                 max1 = str(maxtemp)
-                #logging.info(max1)
                     
                 with hpool.connection(timeout=3) as connectioncur: 
                     tablefc = connectioncur.table('hcurtemp')
@@ -382,29 +412,26 @@ try:
                     
                 dbdc2 = dbc.cursor()
                 for key, data in hscan2:
-                    #print(int(key),int(data['fd:curt']))
-                    #with dbc: ##niet in techt script de with: dbc
                     dbdc2.execute("INSERT INTO curtemp (vkey, vvalue) VALUES(%i,%i)" % (int(key),int(data['fd:curt']) ) )
                     logging.info("new curtemp")
                     logging.info(str(data['fd:curt']))
                 dbdc2.close()
                 
                 dbdc3 = dbc.cursor()
-                #with dbc:
-                dbdc3.execute("DELETE FROM curtemp WHERE vkey NOT IN (SELECT MIN(vkey) FROM curtemp)")
+                dbdc3.execute("DELETE FROM curtemp WHERE vkey NOT IN (SELECT MIN(vkey) FROM curtemp)") #delete old values
                 dbdc3.close()
                 
-                #dbdc4 = dbc.cursor()
-                #dbdc4.execute("SELECT * FROM curtemp")
-                #rows = dbdc4.fetchall()
-                #for row in rows:
-                    #logging.info(row)
-                #dbdc4.close()
             except Exception:
                 logging.exception("fcurtemp")   
             time.sleep(550)
             
     def fgetactscenario():
+        """
+        Downloads most recent temperature scenarios from cloud server.
+        First inserts new temperature scenarios in actscenario table.
+        Then deletes old scenarios from actscenario table. Leaves the last 3 versions.
+        Used by fcontroll() function.
+        """
         while True:   
             try:
                 facurtime = time.time()
@@ -427,12 +454,11 @@ try:
                 dbdac2 = dbc.cursor()
                 for key, data in hscanacts:
                     logging.info(str(key))
-                    #logging.info(int(data['fd:tempdif']))
                     dbdac2.execute("INSERT INTO actscenario (vkey, vgroup, viepoch, vtempdif, vouttempdif, run0, run1, run2, run3, run4, run5, vscore) VALUES('%s',%i,%i,%i,%i,%i,%i,%i,%i,%i,%i,%i)" % (str(key),int(data['fd:group']),int(data['fd:iepoch']),int(data['fd:tempdif']),int(data['fd:outtempdif']),int(data['fd:run0']),int(data['fd:run1']),int(data['fd:run2']),int(data['fd:run3']),int(data['fd:run4']),int(data['fd:run5']),int(data['fd:score']) )   )
                 dbdac2.close()
-                    
+                   
+                #delete all scenario except for the last 3 versions 
                 dbdac3 = dbc.cursor()
-                #with dbc:
                 dbdac3.execute("DELETE FROM actscenario WHERE viepoch NOT IN (SELECT distinct viepoch FROM actscenario order by viepoch desc LIMIT 3)")
                 dbdac3.close()
                     
@@ -441,6 +467,11 @@ try:
             time.sleep(650)
             
     def fupusedscenario():
+        """
+        Uploads data from usedscenario table at Raspberry PI to husedscenario HBase table at cloud server.
+        Includes inserting row in husedscenariotbs index HBase table.
+        Runs as a sperate thread.
+        """
         time.sleep(60)
         while True:
             try:
@@ -473,14 +504,23 @@ try:
             except Exception:
                 logging.exception("fupusedscenario")   
             time.sleep(800) 
-            
+          
     def frunScen (actTemp, setTemp):
+        """
+        Determines if runlevel in boiler controll loop should go from run level 0 to run level 1.
+        Used by fcontroll() function.
+        """
         if ( (setTemp*10) - actTemp > 35):
             return 1
         else:
             return 0
 
     def fscenLength(actTemp, setTemp):
+        """
+        Returns the number of minutes the boiler should be on in a 10 minute intervall.
+        This is only used if the the scenario is not available. 
+        Used by fcontroll() function.
+        """
         scnel = 0
         if ( (setTemp*10) - actTemp > 260):
             scnel = (6*60)
@@ -496,29 +536,47 @@ try:
 
 
     def fboilerStat(starts,scenl,cur ,actTemp,setTemp):
-        if (actTemp -  (setTemp*10) < 35):
-            if (cur - starts < scenl):
-                return 1
+        """
+        Check if boiler should stay on or go off.
+        Used by fcontroll() function.
+        """
+        if (actTemp -  (setTemp*10) < 35): #criteria 1: only say on if act temperature is below set temperature + margin
+            if (cur - starts < scenl): #criteria 2: only stay on of boiler has not been on for the number of seconds it should be on this interval
+                return 1 #stay on
             else:
-                return 0  
+                return 0  #go off
         else:
-            return 2
+            return 2 #go off (2 is used to monitor overflow) 
         
     def getscen(tempdif,outtempdif):
-        selselmode=[1,2]
+        """
+        Returns the number of minutes the boiler should be on for 6 x 10 minute intervalls. 
+        Returns used sceneario key and array of 6 values containing the number of minutes 
+        the boiler should be on each interval. For example: [2,2,2,2,2]
+        
+        Randomly selects 
+        1) best sceario (lowest score) given a tempdif or outtempdif
+        2) not the best sceario (not lowest score) given a tempdif or outtempdif
+        
+        Used by fcontroll() function.
+        """
+        selselmode=[1,2] #1 is best scenario, 2 is not the best scenario
         selmode = random.choice(selselmode)
-        usedkey = 'failed'
+        usedkey = 'failed' #returns failed if it is not possible to slect scenario
         runminutes=[]
         try:
+            #determine the latest version of the temperature scenario's
+            #viepoch is used as version number
+            #the same version is used consistently the rest of the function the stay consistent
+            #even if the scenario's are updated in the meantime
             dbdconsa5 = dbc.cursor()
             dbdconsa5.execute("SELECT max(viepoch) from actscenario")
             rows = dbdconsa5.fetchall()
             for row in rows:
                 maxiepoch = int(row[0])
             dbdconsa5.close()
-            #print (maxiepoch)
             
-            
+            #case for selecting best scenario
             if (selmode == 1):
                 dbdconsa = dbc.cursor()
                 dbdconsa.execute("SELECT vkey, run0,run1,run2,run3,run4,run5 from actscenario a1 \
@@ -541,12 +599,7 @@ try:
                     runminutes = row[1:]
                 dbdconsa.close()
                 
-                #print (usedkey)
-                #print (runminutes[0])
-            
-                #for runm in runminutes:
-                #    print(runm)
-            
+            #case for selecting not the best scenario
             else:
                 dbdconsa2 = dbc.cursor()
                 dbdconsa2.execute("SELECT a1.vgroup, a1.vscore, a1.vouttempdif from actscenario a1 \
@@ -572,15 +625,13 @@ try:
                 dbdconsa3 = dbc.cursor()
                 dbdconsa3.execute("SELECT rowid FROM actscenario WHERE vgroup = %i AND vscore <= %i AND vouttempdif = %i " % (fselgroup,fselscore,fouttempdif))
                 rows = dbdconsa3.fetchall()
-                selrowid = int(random.choice(rows)[0])
+                selrowid = int(random.choice(rows)[0]) #randomly selects a scenario key from the available alternative scenarios
                 
-                #print(selrowid)
-                
+                #select the number of minues given the scenario key selected in the previous step
                 dbdconsa4 = dbc.cursor()
                 dbdconsa4.execute("SELECT vkey,run0,run1,run2,run3,run4,run5 from actscenario WHERE rowid = %i" % (selrowid,))
                 rows = dbdconsa4.fetchall()
                 for row in rows:
-                    #print(row)
                     usedkey = str(row[0])
                     runminutes = row[1:]
             return usedkey,runminutes
@@ -591,21 +642,32 @@ try:
          
             
     def fcontroll(): 
+        """
+        Main boiler controll function. 
+        Gets current and set temperature
+        uses 3 run levels to controll boiler. 
+          run level 0 = initial,
+          run level 1 = determine how many mintues boier shoudl be on, 
+          run level 2 = continuesly check of boier should be on for 10 minutes
+        Inserts message in sendmes table.
+        Runs as seprate thread.
+        """
+       
         runScen = 0
         boilerStat = 0
         setBoiler = 0
-        maxScen = (10*60)
+        maxScen = (10*60) #maximum run for 1 hour long 
         scenLength = 0
-        cursource = '40b5af01'
+        cursource = '40b5af01' #divice id used for logging purposses
+       
         logging.info("time sleep 10 started")
         time.sleep(10)
         logging.info("time sleep 10 complete")
+        
         bvepoch = 9999999999
         usettemp = -30000
         prevsettemp = -30000
         settemptime = -(60*60*24*5)
-        
-        #bvsub = 9999999
 
         
         while True:
@@ -615,12 +677,13 @@ try:
                 fsvsub = int(datetime.datetime.fromtimestamp(fscurtime).strftime('%f'))
                 fkepoch = bvepoch - fsvepoch
                 fsmintime = fsvepoch-5
-                curtemp = -30000
-                settemp = -30000
+                curtemp = -30000 #lower than 0 Kelvin
+                settemp = -30000 #lower than 0 Kelvin
                 curtempepoch = -(60*60*24*5)
                 settempepoch = -(60*60*24*5)
-                outtemp = 1500
+                outtemp = 1500 #default outside temperature
                 
+                #get current actual inside temperature form sensvals table
                 dbd8 = dbc.cursor()
                 dbd8.execute("SELECT vepoch,vvalue FROM sensvals where vsource = '40b5af01' and vport='rx000A04' order by vepoch desc, vkey asc LIMIT 1")
                 rows = dbd8.fetchall()
@@ -629,6 +692,7 @@ try:
                     curtemp = row[1]
                 dbd8.close()
                 
+                #get current set temperature form sensvals table
                 dbd9 = dbc.cursor()
                 dbd9.execute("SELECT vepoch,vvalue FROM sensvals where vsource = '40b5af01' and vport='rx000A02' order by vepoch desc, vkey asc LIMIT 1")
                 rows = dbd9.fetchall()
@@ -637,6 +701,7 @@ try:
                     settemp = row[1]
                 dbd9.close()
                 
+                #get current outside temperature form curtemp table
                 dbcontr1 = dbc.cursor()
                 dbcontr1.execute("SELECT vvalue FROM curtemp ORDER BY vkey asc LIMIT 1")
                 rows = dbcontr1.fetchall()
@@ -644,44 +709,43 @@ try:
                     outtemp = row[0]
                 dbcontr1.close()
                 
+                
+                #only set usettemp if settemp has not ben changed for 5 seconds 
+                #this is prevent the temperature scenrio to be based on a slightly higher settemp instead of waiting for the final set temp
+                #to be set by the user
                 if (prevsettemp != settemp):
                     settemptime = fsvepoch
                 elif (fsvepoch - settemptime > 5 ):
                     usettemp = settemp
-                    
-                #logging.info("settemp")
-                #logging.info(str(settemp))
-                #logging.info("usettemp")
-                #logging.info(str(usettemp))
-                #logging.info("prevsettemp")
-                #logging.info(str(prevsettemp))
-                    
+                         
                 prevsettemp = settemp
                 
-                curtemptimediff = fsvepoch-curtempepoch
-                settemptimediff = fsvepoch-settempepoch
+                
+                #devault variables
+                curtemptimediff = fsvepoch-curtempepoch #check how many seconds ago last current temperature has been received
+                settemptimediff = fsvepoch-settempepoch #check how many seconds ago last current temperature has been received
                 tempdif = (usettemp*10) - curtemp
                 outtempdif = (usettemp*10) - outtemp
                 
+                #!!include if settemp is set and the other checsk if temp is actual 
                 if(runScen == 0): #no scenario running
                     runScen = frunScen(curtemp,usettemp)
                     
                 elif (runScen == 1): #start scenario
                     usedkey = 'failed'
                     usedkey,runminutes = getscen(tempdif,outtempdif)
-                    #logging.info(usedkey)
-                    if (usedkey <> 'failed'):
+                    if (usedkey <> 'failed'): #only use scenarios if a valid scenario has been retrieved
                         scenLength = runminutes[0]
                         maxrun = 6
                         
+                        #insert used scenario and values used to determine this scenario to be uploaded to cloud server for scoring.
                         usscenpreky = cursource+'_'+str(fkepoch)
                         uscenkey = usscenpreky+'_'+ usedkey
                         dbdconsa5 = dbc.cursor()   
                         dbdconsa5.execute("INSERT INTO usedscenario (vkey, vprekey, viepoch, scenariokey, vtempdif, vouttempdif, vtemp, vouttemp, vsettemp) values ('%s','%s',%i,'%s',%i,%i,%i,%i,%i)" % (uscenkey,usscenpreky,fsvepoch,usedkey,tempdif,outtempdif,curtemp,outtemp,settemp))
                         dbdconsa5.close()
-                        
-                        
-                    else:
+             
+                    else: #otherwise determine number of seconds boiler should be on using fscenlengh() function
                         scenLength = fscenLength(curtemp,usettemp)
                         maxrun = 1
                      
@@ -701,60 +765,58 @@ try:
                         boilerStat = fboilerStat(startScen,scenLength,runCurtime,curtemp,settemp)
                   
                     if (boilerStat == 1 ):
-                        setBoiler = 1 #send xbee 1
+                        setBoiler = 1 #send Arduino 1 for boilerstat
                     else:
-                        setBoiler = 0 #send xbee 0
+                        setBoiler = 0 #send Arduino 0 for boilerstat
                   
                     if(runCurtime - startScen > maxScen):
                         runScen = 3
                 
-                elif(runScen == 3): #run scenario
+                elif(runScen == 3): #check if scenario schould go to next interval of 10 minus or complete after 60 miutes
                     runnum = runnum + 1
-                    if (runnum < maxrun):
+                    if (runnum < maxrun): #go to next iteration of 10 minutes
                         runScen = 2
                         boilerStat = 1
                         startScen = int(time.time())
-                        scenLength = runminutes[runnum]
+                        scenLength = runminutes[runnum] #get number of minutes to be on from scenario array
                         logging.info(str(maxrun))
                         logging.info(str(runnum))
                         logging.info(str(scenLength))
-                    else:
+                    else: #completed 60 minutes
                         runScen = 0
-                
-                #logging.info("runscen")
-                #logging.info(runScen)
-                #logging.info("scenlength")
-                #logging.info(scenLength)
-                #logging.info("boilerstat")
-                #logging.info(boilerStat)
-                #logging.info("setBoiler")
-                #logging.info(setBoiler)
                 
                 scurhour = int(datetime.datetime.fromtimestamp(fscurtime).strftime('%H'))
                 scurminute = int(datetime.datetime.fromtimestamp(fscurtime).strftime('%M'))
                 
+                #only send message if temperature readings are current and withint normal range
                 if (curtemp > -30000 and curtemptimediff < 20 and settemp > -30000 and settemptimediff < 20):
                     vchecksum = scurhour+scurminute+setBoiler+curtemp
                     sendstr = str(scurhour).zfill(2) + str(scurminute).zfill(2) + str(setBoiler) + str(curtemp).zfill(4)+str(vchecksum).zfill(4)
-                    #xbee.tx( dest_addr='\x00\x00',dest_addr_long=DEST_ADDR_LONG,data=sendstr,frame_id='\x01')
-                    fins(fscurtime,cursource,'rx000B01',scenLength)
-                    fins(fscurtime,cursource,'rx000B02',boilerStat)
-                    fins(fscurtime,cursource,'rx000B03',setBoiler)
-                    #logging.info(sendstr)
-                    dbd10 = dbc.cursor()
-                    dbd10.execute("INSERT INTO sendmes(vepoch, vsub, vsendmes) VALUES(?,?,?)",(fsvepoch,fsvsub,sendstr))
-                    dbd10.close()
+                    fins(fscurtime,cursource,'rx000B01',scenLength) #for logging purposses, insert in sensvals table
+                    fins(fscurtime,cursource,'rx000B02',boilerStat) #for logging purposses, insert in sensvals table
+                    fins(fscurtime,cursource,'rx000B03',setBoiler) #for logging purposses, insert in sensvals table
                     
+                    #insert message in sendmes table
+                    dbd10 = dbc.cursor()
+                    dbd10.execute("INSERT INTO sendmes(vepoch, vsub, vsendmes) VALUES(?,?,?)",(fsvepoch,fsvsub,sendstr)) 
+                    dbd10.close()
+                
+                #delete older messages, keep messages of last 5 seconds    
                 dbd13 = dbc.cursor()
-                dbd13.execute("DELETE from sendmes where vepoch < %i" % fsmintime)
+                dbd13.execute("DELETE from sendmes where vepoch < %i" % fsmintime) 
                 dbd13.close()
                 
             except Exception:
                 logging.exception("fcontroll")   
-                   
+            time.sleep(1)       
     
     
     def dbstart():
+        """
+        Initial tables
+        Creates required in memmory tables and indexes.
+        Runs once when script is started.
+        """
         try:
             db1 = dbc.cursor()
             db1.execute("DROP TABLE IF EXISTS sensvals")
@@ -800,6 +862,12 @@ try:
     
     #hbase start
     def hbasestart():
+        """
+        Initial HBase 
+        Inserts dummy rows in Hbase tables to prevent HBase scans from crashing if now rows exist.
+        Updates existing row if dummy row already exists.
+        Runs once when script is started.
+        """
         try:
             #insert first vals for ech known key
             knownminkeys = []
@@ -829,15 +897,19 @@ try:
             logging.exception("hbasestart")
     
     def fmain():
+        """
+        Main thread function.
+        """
         try:
             time.sleep(1)
             
             logging.info("hallostart")
-            dbstart()
-            hbasestart()
+            dbstart() #start initial SQLite 
+            hbasestart() #start initial HBase
             
             time.sleep(3)
             
+            #start the functions that run as seperate threads
             threadInsert = myThreadInsert()
             threadRead = myThreadRead()
             threadDel = myThreadDel()
