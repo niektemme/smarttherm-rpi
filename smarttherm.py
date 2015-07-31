@@ -3,7 +3,7 @@
 
 #   Smart Thermostat - Raspberry PI part
 #   Copyright (C) 2015 by Niek Temme
-#   Documentation: http://niektemme.com/@@
+#   Documentation: http://niektemme.com/2015/07/31/smart-thermostat/ @@to do
 #
 #   This program is free software: you can redistribute it and/or modify
 #   it under the terms of the GNU General Public License as published by
