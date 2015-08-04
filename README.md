@@ -1,4 +1,4 @@
-# Smart Thermostat - Arduino
+# Smart Thermostat - Raspberry PI
 
 This repository is accompanying the blog post [Making your own smart 'machine learning' thermostat using Arduino, AWS, HBase, Spark, Raspberry PI and XBee](http://niektemme.com/2015/07/31/smart-thermostat/ @@to do). This blog post describes building and programming your own smart thermostat. 
 
