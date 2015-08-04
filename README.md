@@ -3,9 +3,9 @@
 This repository is accompanying the blog post [Making your own smart 'machine learning' thermostat using Arduino, AWS, HBase, Spark, Raspberry PI and XBee](http://niektemme.com/2015/07/31/smart-thermostat/ @@to do). This blog post describes building and programming your own smart thermostat. 
 
 This smart thermostat is based on three feedback loops. 
-- I. The first loop is based on an Arduino directly controlling the boiler. [Smart Thermostat - Arduino Repository](https://github.com/niektemme/smarttherm-rpi)
-- **II. The second feedback loop is a Raspberry PI that receives temperature data en boiler status information from the Arduino and sends instructions to the Arduino.** 
-- II. The third and last feedback loop is a server in the Cloud. This server uses machine learning to optimize the boiler control model that is running on the Raspberry PI. [Smart Thermostat - AWS - HBase - Spark Repository Repository](https://github.com/niektemme/smarttherm-aws-hbase-spark)
+- I. The first loop is based on an Arduino directly controlling the boiler. [Smart Thermostat - Arduino Repository](https://github.com/niektemme/smarttherm-arduino)
+- **II. The second feedback loop is a Raspberry PI that receives temperature data en boiler status information from the Arduino and sends instructions to the Arduino. (this repostiory)** 
+- II. The third and last feedback loop is a server in the Cloud. This server uses machine learning to optimize the boiler control model that is running on the Raspberry PI. [Smart Thermostat - AWS - HBase - Spark Repository](https://github.com/niektemme/smarttherm-aws-hbase-spark)
 
 ![Smart thermostat overview - three feedback loops](https://niektemme.files.wordpress.com/2015/07/schema_loop3.png)
 
@@ -35,7 +35,7 @@ The following Python libraries are required
 - logging - should be installed by default
 
 ### Python file location
-The init.d script assumes the python script is located in /usr/local/smarttherm/ . This can be modified to any location on the raspberry py.
+The init.d script assumes the python script is located in /usr/local/smarttherm/ . This can be modified to any location on the Raspberry PI.
 
 ### Making the python file executable
 The python file has to be executable to run in the background. Do: sudo chmod a+x ./smarttherm.py from the script location.
@@ -46,8 +46,11 @@ The python script by default sets the log file to /usr/local/tempniek/18log.log 
 ### init.d script
 The init.d script, smarttherm.sh, needs to be in the /etc/init.d/ folder. In addition the .sh file needs to be executable. Do The python file has to be executable to run in the background. Do: sudo chmod a+x ./smarttherm.sh from the script location.
 
-###HBase tables
-Uploading the sensor data and used temperature scenarios requires five HBase tables. These can be created with the three commands bellow. This assumes LZO compression is installed. All tables only have one column family.
+### HBase
+Uploading the sensor data and used temperature scenarios requires HBase and the HBase thrift service to be running on a server in the cloud. The [Apache HBase](http://hbase.apache.org/book.html) website has a good tutorial. 
+
+### HBase tables
+Uploading the sensor data to HBase also requires five HBase tables. These can be created with the three commands bellow. This assumes LZO compression is installed. All tables only have one column family.
 - create 'hsensvals', {NAME => 'fd', DATA_BLOCK_ENCODING => 'FAST_DIFF', COMPRESSION => 'LZO'}
 - create 'hcurtemp', {NAME => 'fd', DATA_BLOCK_ENCODING => 'FAST_DIFF', COMPRESSION => 'LZO'}
 - create 'hactscenario', {NAME => 'fd', DATA_BLOCK_ENCODING => 'FAST_DIFF', COMPRESSION => 'LZO'}
