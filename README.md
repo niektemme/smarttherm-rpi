@@ -5,7 +5,7 @@ This repository is accompanying the blog post [Making your own smart 'machine le
 This smart thermostat is based on three feedback loops. 
 - I. The first loop is based on an Arduino directly controlling the boiler. [Smart Thermostat - Arduino Repository](https://github.com/niektemme/smarttherm-rpi)
 - **II. The second feedback loop is a Raspberry PI that receives temperature data en boiler status information from the Arduino and sends instructions to the Arduino.** 
-- II. The third and last feedback loop is a server in the Cloud. This server uses machine learning to optimize the boiler control model that is running on the Raspberry PI. [Smart Thermostat - AWS - HBase - Spark Repository Repository](https://github.com/niektemme/smarttherm-rpi)
+- II. The third and last feedback loop is a server in the Cloud. This server uses machine learning to optimize the boiler control model that is running on the Raspberry PI. [Smart Thermostat - AWS - HBase - Spark Repository Repository](https://github.com/niektemme/smarttherm-aws-hbase-spark)
 
 ![Smart thermostat overview - three feedback loops](https://niektemme.files.wordpress.com/2015/07/schema_loop3.png)
 
