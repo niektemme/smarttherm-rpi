@@ -80,4 +80,5 @@ The code used in this project is often based on wonderful and clearly written ex
 - Michael Bouvy - http://michael.bouvy.net
 - Paco Nathan - O'Reilly Media - http://iber118.com/pxn/
 - Robert Faludi - Digi International - http://www.faludi.com
+- Roger Binns - Another Python SQLite Wrapper - https://github.com/rogerbinns/apsw/
 - Stephen Phillips - The University of Southampton, IT Innovation Centre  - http://blog.scphillips.com
